@@ -1,0 +1,27 @@
+name: storage_hub
+description: >-
+  This package can store files on device 
+  and chunk upload to your storage when triggered.
+
+version: 0.0.1
+repository: "https://github.com/Performans-Dev/storage_hub"
+
+environment:
+  sdk: '>=2.18.5 <3.0.0'
+  flutter: ">=1.17.0"
+
+dependencies:
+  dio: ^4.0.6
+  flutter:
+    sdk: flutter
+  path: ^1.8.2
+  path_provider: ^2.0.11
+  sqflite: ^2.2.0+3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+  
+flutter:
+
