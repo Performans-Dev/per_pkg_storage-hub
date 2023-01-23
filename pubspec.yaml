@@ -3,7 +3,7 @@ description: >-
   This package can store files on device 
   and chunk upload to your storage when triggered.
 
-version: 0.0.1
+version: 0.0.2
 repository: "https://github.com/Performans-Dev/storage_hub"
 
 environment:
