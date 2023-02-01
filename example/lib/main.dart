@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:storage_hub/storage_hub.dart';
 
 void main() {
   runApp(const MyApp());
@@ -101,7 +100,7 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
             Text(
               '$_counter',
-              style: Theme.of(context).textTheme.headline4,
+              style: Theme.of(context).textTheme.headlineMedium,
             ),
           ],
         ),
