@@ -4,7 +4,7 @@ description: >-
   and chunk upload to your storage when triggered.
 
 
-version: 0.0.2
+version: 0.0.4
 repository: "https://github.com/Performans-Dev/storage_hub"
 
 environment:

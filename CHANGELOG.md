@@ -1,3 +1,9 @@
+## 0.0.4
+* Added eventListener
+
+## 0.0.3
+* Fixed an sqlite error when metadata is used.
+
 ## 0.0.2
 * Added `deleteFile` method
 ```

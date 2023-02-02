@@ -1,5 +1,6 @@
 library storage_hub;
 
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'dart:math' as math;
@@ -59,6 +60,9 @@ class StorageHub {
   /// it will return 0 if there is no operation.
   static double progress = 0;
 
+  /// onEvent callback
+  static Function(dynamic)? _onEvent;
+
   /// Configuration/Initialization method
   static configure({
     required String baseUrl,
@@ -67,6 +71,7 @@ class StorageHub {
     String? putUrl = '?upload_id=',
     int? chunkSize,
     int? retryCount,
+    Function(dynamic)? onEvent,
   }) async {
     apiEndpointBaseUrl = baseUrl;
     apiSecurityKey = apiKey;
@@ -74,6 +79,7 @@ class StorageHub {
     if (putUrl != null) apiEndpointPutUrl = putUrl;
     if (chunkSize != null) chunkSizeInBytes = chunkSize;
     if (retryCount != null) errorTreshold = retryCount;
+    _onEvent = onEvent;
     isConfigured = true;
   }
 
@@ -122,10 +128,17 @@ class StorageHub {
   /// If the file did started to upload before, this time it will resume
   static void triggerSync() async {
     if (isSyncing) return;
-    isSyncing = true;
     //
     syncingFile = await _populateFileList();
-    await _startProgress();
+
+    isSyncing = syncingFile != null;
+
+    try {
+      await _startProgress();
+    } catch (err) {
+      log(err.toString(), name: "StorageHub");
+      isSyncing = false;
+    }
   }
 
   /// This will return a fileList
@@ -151,7 +164,10 @@ class StorageHub {
       syncingFile!.status = SyncStatus.uploading;
       _updateSyncingFileInList();
       await _DbProvider.db.updateFile(file: syncingFile!);
-      syncingFile = await _NetworkProvider.putFile(file: syncingFile!);
+      syncingFile = await _NetworkProvider.putFile(
+        file: syncingFile!,
+        onEvent: _onEvent,
+      );
     } else {
       // post
       syncingFile!.status = SyncStatus.requestingUpload;
@@ -171,6 +187,8 @@ class StorageHub {
         return;
       case SyncStatus.uploaded:
         // completed
+
+        await _DbProvider.db.deleteFile(id: syncingFile?.id ?? 0);
         isSyncing = false;
         syncingFile = null;
         triggerSync();
@@ -226,7 +244,7 @@ class FileDefinition {
   SyncStatus status;
   int errorCount;
   int? processStartTime;
-  Map<String, dynamic> metadata;
+  Map<String, dynamic>? metadata;
   FileDefinition({
     this.id,
     this.time,
@@ -238,7 +256,7 @@ class FileDefinition {
     required this.status,
     required this.errorCount,
     this.processStartTime,
-    required this.metadata,
+    this.metadata,
   });
 
   Map<String, dynamic> toMap() => {
@@ -249,10 +267,10 @@ class FileDefinition {
         'totalBytes': totalBytes,
         'uploadedBytes': uploadedBytes,
         'sessionId': sessionId,
-        'status': status.index,
+        'syncStatus': status.index,
         'errorCount': errorCount,
         'processStartTime': processStartTime,
-        'metadata': metadata,
+        'metadata': metadata != null ? json.encode(metadata) : null,
       };
 
   Map<String, dynamic> toRow() => {
@@ -262,10 +280,10 @@ class FileDefinition {
         'totalBytes': totalBytes,
         'uploadedBytes': uploadedBytes,
         'sessionId': sessionId,
-        'status': status.index,
+        'syncStatus': status.index,
         'errorCount': errorCount,
         'processStartTime': processStartTime,
-        'metadata': metadata,
+        'metadata': metadata != null ? json.encode(metadata) : null,
       };
 
   factory FileDefinition.fromMap(Map<String, dynamic> map) => FileDefinition(
@@ -276,10 +294,12 @@ class FileDefinition {
         totalBytes: map['totalBytes']?.toInt() ?? 0,
         uploadedBytes: map['uploadedBytes']?.toInt() ?? 0,
         sessionId: map['sessionId'],
-        status: SyncStatus.values[map['status']],
+        status: SyncStatus.values[map['syncStatus']],
         errorCount: map['errorCount']?.toInt() ?? 0,
         processStartTime: map['processStartTime']?.toInt(),
-        metadata: Map<String, dynamic>.from(map['metadata']),
+        metadata: map['metadata'] == null
+            ? null
+            : Map<String, dynamic>.from(json.decode(map['metadata'])),
       );
 }
 
@@ -323,6 +343,7 @@ class _DbProvider {
     final db = await database;
     if (db == null) return -1;
     try {
+      log('Updating Row: ${file.toMap().toString()}', name: 'StorageHub');
       int lastId = await db.insert(
         _Keys.tableName,
         file.toMap(),
@@ -356,6 +377,7 @@ class _DbProvider {
     if (db == null) return -1;
     try {
       Map<String, dynamic> row = file.toRow();
+      log('Updating Row: ${row.toString()}', name: 'StorageHub');
       int updateCount = await db.update(
         _Keys.tableName,
         row,
@@ -419,6 +441,7 @@ class _NetworkProvider {
     if (headers != null) dio.options.headers.addAll(headers);
     if (contentType != null) dio.options.contentType = contentType;
     dio.options.followRedirects = false;
+    // dio.options.baseUrl = StorageHub.apiEndpointBaseUrl;
     (dio.httpClientAdapter as DefaultHttpClientAdapter).onHttpClientCreate =
         (HttpClient dioClient) {
       dioClient.badCertificateCallback =
@@ -430,13 +453,13 @@ class _NetworkProvider {
 
   static Future<FileDefinition> requestUpload(
       {required FileDefinition file}) async {
-    Map<String, dynamic> request = file.metadata;
+    Map<String, dynamic> request = file.metadata ?? {};
     request['time'] = file.time;
     request['fileName'] = file.fileName;
 
     Map<String, dynamic> headers = {
       "X-Api-Key": StorageHub.apiSecurityKey,
-      "Content=Type": "application/json",
+      "Content-Type": "application/json",
       "X-Upload-Content-Type": _Utils.getContentType(file.fileName),
       "X-Upload-Content-Length": file.totalBytes,
     };
@@ -444,34 +467,40 @@ class _NetworkProvider {
     Dio dio = _prepareDio(headers: headers, contentType: "application/json");
     String url =
         "${StorageHub.apiEndpointBaseUrl}${StorageHub.apiEndpointPostUrl}${file.fileName}";
-    Response response = await dio.post(url, data: request);
-    if (response.statusCode == HttpStatus.ok ||
-        response.statusCode == HttpStatus.created) {
-      if (response.data != null &&
-          response.data['success'] == true &&
-          response.data['statusCode'] == HttpStatus.ok) {
-        String sessionId = response.data['data'][0]['id'];
-        file.sessionId = sessionId;
-        file.status = SyncStatus.idle;
+    try {
+      Response response = await dio.post(url, data: request);
+      if (response.statusCode == HttpStatus.ok ||
+          response.statusCode == HttpStatus.created) {
+        if (response.data != null &&
+            response.data['success'] == true &&
+            response.data['statusCode'] == HttpStatus.ok) {
+          String sessionId = response.data['data'][0]['id'];
+          file.sessionId = sessionId;
+          file.status = SyncStatus.idle;
+        } else {
+          file.status = SyncStatus.error;
+        }
       } else {
         file.status = SyncStatus.error;
       }
-    } else {
-      file.status = SyncStatus.error;
-    }
 
-    await _DbProvider.db.updateFile(file: file);
+      await _DbProvider.db.updateFile(file: file);
+    } on DioError catch (err) {
+      log(err.toString(), name: 'StorageHub');
+    }
 
     return file;
   }
 
   static Future<FileDefinition> putFile(
-      {required FileDefinition file, Function(int, int)? progress}) async {
+      {required FileDefinition file,
+      Function(int, int)? progress,
+      Function(dynamic)? onEvent}) async {
     //..
     String contentType = _Utils.getContentType(file.fileName);
     Map<String, dynamic> headers = {
       "X-Api-Key": StorageHub.apiSecurityKey,
-      "Content=Type": contentType,
+      "Content-Type": contentType,
       "Content-Range": "bytes */*",
       "Accept-Encoding": "gzip,deflate,br",
       "Accept": "*/*",
@@ -506,6 +535,7 @@ class _NetworkProvider {
       case HttpStatus.ok:
         file.uploadedBytes = file.totalBytes;
         file.status = SyncStatus.uploaded;
+
         break;
       case HttpStatus.requestedRangeNotSatisfiable:
         file.uploadedBytes = 0;
@@ -532,6 +562,14 @@ class _NetworkProvider {
     }
     await _DbProvider.db.updateFile(file: file);
 
+    if (onEvent != null) {
+      onEvent({
+        'fileName': file.fileName,
+        'status': file.status,
+        'uploadedBytes': file.uploadedBytes,
+        'totalBytes': file.totalBytes,
+      });
+    }
     return file;
   }
 }
