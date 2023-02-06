@@ -1,3 +1,6 @@
+## 0.0.5
+* Added initial loading of files after initialization.
+
 ## 0.0.4
 * Added eventListener
 

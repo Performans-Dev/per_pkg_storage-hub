@@ -81,6 +81,7 @@ class StorageHub {
     if (retryCount != null) errorTreshold = retryCount;
     _onEvent = onEvent;
     isConfigured = true;
+    fileList = await _DbProvider.db.getFilesByStatus();
   }
 
   /// add a file to database
